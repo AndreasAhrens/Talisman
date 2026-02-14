@@ -40,7 +40,85 @@ function init_localization()
 	talismanloc()
 end
 
-Talisman = {config_file = {disable_anims = false, break_infinity = "omeganum", score_opt_id = 2}, mod_path = talisman_path, default_notation = "Balatro"}
+Talisman = {config_file = {disable_anims = false, break_infinity = "omeganum", score_opt_id = 2, ui_debug = false, ui_guard = true}, mod_path = talisman_path, default_notation = "Balatro"}
+
+local function tal_ui_debug_enabled()
+  return Talisman.config_file and Talisman.config_file.ui_debug
+end
+
+local function tal_ui_guard_enabled()
+  return Talisman.config_file == nil or Talisman.config_file.ui_guard ~= false
+end
+
+local function tal_log_ui_node(context, msg)
+  if not tal_ui_debug_enabled() then return end
+  print('[Talisman UI] '..context..' '..msg)
+end
+
+local function tal_has_exclaim_text(node)
+  if type(node) ~= 'table' then return false end
+  if G and G.UIT and node.n == G.UIT.T and node.config and node.config.text == '!' then return true end
+  if not node.nodes then return false end
+  for i = 1, #node.nodes do
+    if tal_has_exclaim_text(node.nodes[i]) then return true end
+  end
+  return false
+end
+
+local function tal_should_guard_colour(node)
+  if type(node) ~= 'table' then return false end
+  local cfg = node.config or {}
+  if cfg.button then return true end
+  if cfg.button_UIE then return true end
+  if cfg.button_active then return true end
+  if tal_has_exclaim_text(node) then return true end
+  return false
+end
+
+local function tal_normalize_ui_node(node, context)
+  if type(node) ~= 'table' or not tal_ui_guard_enabled() then return node end
+  local had_config = node.config ~= nil
+  node.config = node.config or {}
+  local cfg = node.config
+  local should_guard = tal_should_guard_colour(node)
+  local missing_colour = cfg.colour == nil
+  if should_guard and missing_colour then
+    cfg.colour = (G and G.C and G.C.BLUE) or {0.25, 0.55, 0.9, 1}
+    tal_log_ui_node(context, 'guarded missing colour role='..tostring(cfg.role)..' button='..tostring(cfg.button)..' had_config='..tostring(had_config))
+  elseif should_guard then
+    tal_log_ui_node(context, 'colour already present role='..tostring(cfg.role)..' button='..tostring(cfg.button))
+  end
+
+  if node.nodes then
+    for i = 1, #node.nodes do
+      tal_normalize_ui_node(node.nodes[i], context..'.'..i)
+    end
+  end
+  return node
+end
+
+local function tal_safe_uibox_button(args, context)
+  local ret = UIBox_button(args)
+  return tal_normalize_ui_node(ret, context or 'UIBox_button')
+end
+
+local function tal_safe_round_eval_row(row)
+  if not tal_ui_guard_enabled() then
+    return add_round_eval_row(row)
+  end
+  row = row or {}
+  if row.dollars == nil then row.dollars = 0 end
+  if row.name == 'bottom' then
+    row.colour = row.colour or G.C.MONEY
+  elseif row.name == 'blind1' then
+    row.colour = row.colour or G.C.GOLD
+  else
+    row.colour = row.colour or (G.C.UI and G.C.UI.BACKGROUND_LIGHT) or G.C.GREY
+  end
+  tal_log_ui_node('add_round_eval_row', 'name='..tostring(row.name)..' dollars='..tostring(row.dollars)..' colour_set='..tostring(row.colour ~= nil))
+  return add_round_eval_row(row)
+end
+
 local config_read_result = nativefs.read(talisman_path.."/config.lua")
 if config_read_result then
     Talisman.config_file = STR_UNPACK(config_read_result)
@@ -57,11 +135,13 @@ if config_read_result then
       Talisman.config_file.break_infinity = "omeganum"
     end
 end
+if Talisman.config_file.ui_debug == nil then Talisman.config_file.ui_debug = false end
+if Talisman.config_file.ui_guard == nil then Talisman.config_file.ui_guard = true end
 if not SMODS or not JSON then
   local createOptionsRef = create_UIBox_options
   function create_UIBox_options()
   contents = createOptionsRef()
-  local m = UIBox_button({
+  local m = tal_safe_uibox_button({
   minw = 5,
   button = "talismanMenu",
   label = {
@@ -725,17 +805,17 @@ if not Talisman.F_NO_COROUTINE then
                       }},{n = G.UIT.R,  nodes = {
                       {n=G.UIT.O, config={object = DynaText({string = {{ref_table = G.scoring_text, ref_value = 4}}, colours = {G.C.UI.TEXT_LIGHT}, shadow = true, pop_in = 0, scale = 0.4, silent = true})}},
                       }},{n = G.UIT.R,  nodes = {
-                      UIBox_button({
+                      tal_safe_uibox_button({
                         colour = G.C.BLUE,
                         button = "tal_abort",
                         label = { localize("talisman_string_E") },
                         minw = 4.5,
                         focus_args = { snap_to = true },
-                      })}},
+                      }, 'scoring_overlay.abort_button')}},
                     }}}
-                  G.FUNCS.overlay_menu({
+              G.FUNCS.overlay_menu({
                       definition = 
-                      {n=G.UIT.ROOT, minw = G.ROOM.T.w*5, minh = G.ROOM.T.h*5, config={align = "cm", padding = 9999, offset = {x = 0, y = -3}, r = 0.1, colour = {G.C.GREY[1], G.C.GREY[2], G.C.GREY[3],0.7}}, nodes= G.SCORING_TEXT}, 
+                      tal_normalize_ui_node({n=G.UIT.ROOT, minw = G.ROOM.T.w*5, minh = G.ROOM.T.h*5, config={align = "cm", padding = 9999, offset = {x = 0, y = -3}, r = 0.1, colour = {G.C.GREY[1], G.C.GREY[2], G.C.GREY[3],0.7}}, nodes= G.SCORING_TEXT}, 'scoring_overlay'), 
                       config = {align="cm", offset = {x=0,y=0}, major = G.ROOM_ATTACH, bond = 'Weak'}
                   })
               else
@@ -957,15 +1037,15 @@ local gfer = G.FUNCS.evaluate_round
 function G.FUNCS.evaluate_round()
     if Talisman.config_file.disable_anims then
       if to_big(G.GAME.chips) >= to_big(G.GAME.blind.chips) then
-          add_round_eval_row({dollars = G.GAME.blind.dollars, name='blind1', pitch = 0.95})
+          tal_safe_round_eval_row({dollars = G.GAME.blind.dollars, name='blind1', pitch = 0.95})
       else
-          add_round_eval_row({dollars = 0, name='blind1', pitch = 0.95, saved = true})
+          tal_safe_round_eval_row({dollars = 0, name='blind1', pitch = 0.95, saved = true})
       end
       local arer = add_round_eval_row
       add_round_eval_row = function() return end
       local dollars = gfer()
       add_round_eval_row = arer
-      add_round_eval_row({name = 'bottom', dollars = Talisman.dollars})
+      tal_safe_round_eval_row({name = 'bottom', dollars = Talisman.dollars})
     else
         return gfer()
     end
